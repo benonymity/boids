@@ -12,10 +12,10 @@
 #include <vector>
 #include <random>
 
-#define NS_PRIVATE_IMPLEMENTATION
-#define CA_PRIVATE_IMPLEMENTATION
-#define MTL_PRIVATE_IMPLEMENTATION
-#include "Metal.hpp"
+// #define NS_PRIVATE_IMPLEMENTATION
+// #define CA_PRIVATE_IMPLEMENTATION
+// #define MTL_PRIVATE_IMPLEMENTATION
+// #include "Metal.hpp"
 
 // Boid structure
 struct Boid {
@@ -60,17 +60,17 @@ struct Slider {
 
 // Function prototypes
 void initBoids(std::vector<Boid>& boids);
-void updateBoid(Boid& boid, const std::vector<Boid>& boids, const Predator& predator);
+void updateBoid(Boid& boid, const std::vector<Boid>& boids, const std::vector<Predator>& predators);
 void drawBoid(Tigr* screen, const Boid& boid);
 void drawSlider(Tigr* screen, Slider& slider);
 void updateSlider(Slider& slider, int mouseX, int mouseY, bool mouseDown);
 void addBoid(std::vector<Boid>& boids, float x, float y);
-void handleHotkeys(Tigr* screen, std::vector<Boid>& boids, Predator& predator);
-void resetSimulation(std::vector<Boid>& boids, Predator& predator);
+void handleHotkeys(Tigr* screen, std::vector<Boid>& boids, std::vector<Predator>& predators);
+void resetSimulation(std::vector<Boid>& boids, std::vector<Predator>& predators);
 void nudgeBoids(Tigr* screen, std::vector<Boid>& boids, float dx, float dy);
 TPixel hsvToRgb(float h, float s, float v);
-void addPredator(Predator& predator, float x, float y);
-void updatePredator(Predator& predator, const std::vector<Boid>& boids);
+void addPredator(std::vector<Predator>& predators, float x, float y);
+void updatePredator(Predator& predator, const std::vector<Boid>& boids, const std::vector<Predator>& predators);
 void drawPredator(Tigr* screen, const Predator& predator);
 
 // Random number generator
@@ -168,8 +168,8 @@ int main() {
     std::vector<Boid> boids(NUM_BOIDS);
     initBoids(boids);
 
-    // Initialize predator
-    Predator predator = {0, 0, 0, 0, tigrRGB(255, 0, 0), false};
+    // Initialize predators
+    std::vector<Predator> predators(0);
 
     // Initialize sliders
     std::vector<Slider> sliders = {
@@ -203,7 +203,7 @@ int main() {
         bool rightMouseDown = (buttons & 2) != 0;
 
         // Handle hotkeys
-        handleHotkeys(screen, boids, predator);
+        handleHotkeys(screen, boids, predators);
 
         // Check space key to toggle animation
         bool currentSpaceState = tigrKeyDown(screen, TK_SPACE);
@@ -251,8 +251,7 @@ int main() {
 
         // Add predator on right click
         if (rightMouseDown) {
-            addPredator(predator, mouseX, mouseY);
-            predator.show = true;
+            addPredator(predators, mouseX, mouseY);
         }
 
         // Update parameters from sliders
@@ -274,7 +273,9 @@ int main() {
 
         // Update predator color to be opposite of boid color
         float oppositePredatorHue = std::fmod(HUE + 0.5f, 1.0f);  // Add 0.5 to get the opposite hue, wrap around if > 1
-        predator.color = hsvToRgb(oppositePredatorHue, 1.0f, 1.0f);
+        for (auto& predator : predators) {
+            predator.color = hsvToRgb(oppositePredatorHue, 1.0f, 1.0f);
+        }
 
         // Update and draw boids
         if (animationRunning) {
@@ -282,14 +283,18 @@ int main() {
             // updateBoidsWithGPU(device, commandQueue, boidsBuffer, deltaTime, boids.size());
             // for now, let's just do it on the CPU
             for (auto& boid : boids) {
-                updateBoid(boid, boids, predator);
+                updateBoid(boid, boids, predators);
             }
-            updatePredator(predator, boids);
+            for (auto& predator : predators) {
+                updatePredator(predator, boids, predators);
+            }
         }
         for (auto& boid : boids) {
             drawBoid(screen, boid);
         }
-        drawPredator(screen, predator);
+        for (auto& predator : predators) {
+            drawPredator(screen, predator);
+        }
 
         // Update display
         tigrUpdate(screen);
@@ -322,16 +327,24 @@ void addBoid(std::vector<Boid>& boids, float x, float y) {
     boids.push_back(newBoid);
 }
 
-void addPredator(Predator& predator, float x, float y) {
-    predator.x = x;
-    predator.y = y;
-    predator.dx = dis(gen) * 10 - 5;
-    predator.dy = dis(gen) * 10 - 5;
+void addPredator(std::vector<Predator>& predators, float x, float y) {
+    Predator newPredator;
+    newPredator.x = x;
+    newPredator.y = y;
+    newPredator.dx = dis(gen) * 10 - 5;
+    newPredator.dy = dis(gen) * 10 - 5;
+    predators.push_back(newPredator);
 }
 
 float distance(const Boid& b1, const Boid& b2) {
     float dx = b1.x - b2.x;
     float dy = b1.y - b2.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+float distance(const Predator& p1, const Predator& p2) {
+    float dx = p1.x - p2.x;
+    float dy = p1.y - p2.y;
     return std::sqrt(dx * dx + dy * dy);
 }
 
@@ -385,12 +398,14 @@ void avoidOthers(Boid& boid, const std::vector<Boid>& boids) {
     boid.dy += moveY * AVOID_FACTOR;
 }
 
-void avoidPredator(Boid& boid, const Predator& predator) {
+void avoidPredator(Boid& boid, const std::vector<Predator>& predators) {
     float moveX = 0, moveY = 0;
 
-    if (distance(boid, predator) < VISUAL_RANGE) {
-        moveX += boid.x - predator.x;
-        moveY += boid.y - predator.y;
+    for (const auto& predator : predators) {
+        if (distance(boid, predator) < VISUAL_RANGE) {
+            moveX += boid.x - predator.x;
+            moveY += boid.y - predator.y;
+        }
     }
 
     boid.dx += moveX * PREDATOR_FEAR_FACTOR;
@@ -425,10 +440,10 @@ void limitSpeed(Boid& boid) {
     }
 }
 
-void updateBoid(Boid& boid, const std::vector<Boid>& boids, const Predator& predator) {
+void updateBoid(Boid& boid, const std::vector<Boid>& boids, const std::vector<Predator>& predators) {
     flyTowardsCenter(boid, boids);
     avoidOthers(boid, boids);
-    avoidPredator(boid, predator);
+    avoidPredator(boid, predators);
     matchVelocity(boid, boids);
     limitSpeed(boid);
     keepWithinBounds(boid);
@@ -442,13 +457,13 @@ void updateBoid(Boid& boid, const std::vector<Boid>& boids, const Predator& pred
     }
 }
 
-void updatePredator(Predator& predator, const std::vector<Boid>& boids) {
+void updatePredator(Predator& predator, const std::vector<Boid>& boids, const std::vector<Predator>& predators) {
     if (boids.empty()) return;
 
     // Calculate the center of mass of nearby boids
     float centerX = 0, centerY = 0;
     int nearbyCount = 0;
-    float detectionRange = 500.0f; // Adjust this value as needed
+    float detectionRange = 150.0f; // Adjust this value as needed
 
     for (const auto& boid : boids) {
         float dist = distance(boid, predator);
@@ -481,8 +496,38 @@ void updatePredator(Predator& predator, const std::vector<Boid>& boids) {
         predator.dy = (predator.dy / speed) * predatorSpeedLimit;
     }
 
+    // Avoid other predators
+    const float minDistance = 30.0f;
+    for (const auto& otherPredator : predators) {
+        if (&otherPredator != &predator) {
+            float dist = distance(otherPredator, predator);
+            if (dist < minDistance) {
+                float avoidFactor = 0.1f;
+                predator.dx += (predator.x - otherPredator.x) * avoidFactor;
+                predator.dy += (predator.y - otherPredator.y) * avoidFactor;
+            }
+        }
+    }
+
+    // Update predator position
     predator.x += predator.dx;
     predator.y += predator.dy;
+
+    // Keep predator within screen bounds
+    if (predator.x < 0) {
+        predator.x = 0;
+        predator.dx *= -1;
+    } else if (predator.x > SCREEN_WIDTH) {
+        predator.x = SCREEN_WIDTH;
+        predator.dx *= -1;
+    }
+    if (predator.y < 0) {
+        predator.y = 0;
+        predator.dy *= -1;
+    } else if (predator.y > SCREEN_HEIGHT) {
+        predator.y = SCREEN_HEIGHT;
+        predator.dy *= -1;
+    }
 }
 
 void drawBoid(Tigr* screen, const Boid& boid) {
@@ -534,8 +579,6 @@ void drawBoid(Tigr* screen, const Boid& boid) {
 }
 
 void drawPredator(Tigr* screen, const Predator& predator) {
-    if (!predator.show) return;
-
     // Draw the predator as a rectangle with 3:1 ratio
     float width = SIZE * 2 * 3; // Width of the rectangle (3:1 ratio, doubled from SIZE)
     float height = SIZE * 2; // Height of the rectangle (3:1 ratio, doubled from SIZE)
@@ -598,9 +641,9 @@ void updateSlider(Slider& slider, int mouseX, int mouseY, bool mouseDown) {
     }
 }
 
-void handleHotkeys(Tigr* screen, std::vector<Boid>& boids, Predator& predator) {
+void handleHotkeys(Tigr* screen, std::vector<Boid>& boids, std::vector<Predator>& predators) {
     if (tigrKeyDown(screen, 'R')) {
-        resetSimulation(boids, predator);
+        resetSimulation(boids, predators);
     }
     if (tigrKeyDown(screen, TK_LEFT)) {
         nudgeBoids(screen, boids, -4, 0);
@@ -616,11 +659,11 @@ void handleHotkeys(Tigr* screen, std::vector<Boid>& boids, Predator& predator) {
     }
 }
 
-void resetSimulation(std::vector<Boid>& boids, Predator& predator) {
+void resetSimulation(std::vector<Boid>& boids, std::vector<Predator>& predators) {
     boids.clear();
     boids.resize(0);
-
-    predator.show = false;
+    predators.clear();
+    predators.resize(0);
 }
 
 void nudgeBoids(Tigr* screen, std::vector<Boid>& boids, float dx, float dy) {
